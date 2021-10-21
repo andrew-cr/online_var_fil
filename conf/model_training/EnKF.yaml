@@ -1,0 +1,6 @@
+# @package _group_
+
+func_type: 'EnKF'
+ensemble_size: 1000000
+
+save_models: True

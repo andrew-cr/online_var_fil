@@ -1,0 +1,6 @@
+# @package _global_
+hydra:
+  sweep:
+    dir: outputs/${now:%Y-%m-%d_%H-%M-%S}_${name}_sweep
+  run:
+    dir: outputs/${now:%Y-%m-%d_%H-%M-%S}_${name}_run

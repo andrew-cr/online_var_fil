@@ -1,0 +1,9 @@
+# @package _group_
+
+func_type: 'VJF'
+phi_lr: 1e-2
+phi_lr_decay_gamma: 0.991
+phi_iters: 500
+phi_minibatch_size: 32
+phi_t_init_method: pred
+window_size: 1

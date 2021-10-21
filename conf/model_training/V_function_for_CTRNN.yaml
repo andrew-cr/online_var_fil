@@ -1,0 +1,28 @@
+# @package _group_
+
+func_type: 'Vx_t'
+q_hidden_dims: [100]
+phi_lr: 1e-2
+phi_iters: 500
+phi_minibatch_size: 10
+phi_t_init_method: pred
+window_size: 1
+
+V_batch_size: 250
+V_lr: 1e-2
+V_minibatch_size: 10
+V_iters: 25
+KRR_lambda: 0.01
+KRR_sigma: 2
+KRR_train_sigma: True
+KRR_train_lam: False
+KRR_init_sigma_median: True
+KRR_centre_elbo: True
+
+approx_decay: 1.
+approx_with_filter: True
+save_models: True
+plot_diagnostics: False
+evaluate_elbo: False
+evaluate_final_elbo: False
+evaluate_elbo_num_samples: 2500

@@ -1,0 +1,10 @@
+defaults:
+  - globals
+  - model_training: V_function_for_CTRNN
+  - data: CTRNN
+
+name: "Train"
+
+# system
+device: "cpu"
+seed: null

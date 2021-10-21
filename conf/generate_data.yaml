@@ -1,0 +1,10 @@
+defaults:
+  - globals
+  - data: linear_gaussian
+
+name: "GenerateData"
+
+# system
+device: "cpu"
+seed: 1234
+

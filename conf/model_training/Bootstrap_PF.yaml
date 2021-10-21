@@ -1,0 +1,6 @@
+# @package _group_
+
+func_type: 'Bootstrap_PF'
+num_particles: 1000000
+
+save_models: True

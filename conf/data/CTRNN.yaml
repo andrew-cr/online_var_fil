@@ -1,0 +1,12 @@
+# @package _group_
+#  Data params
+data_name: CTRNN
+path_to_data: null
+dim: 5
+grid_size: 0.001
+gamma: 2.5
+tau: 0.025
+U_std: 1e-1
+V_scale: 1e-1
+V_df: 2
+num_data: 500

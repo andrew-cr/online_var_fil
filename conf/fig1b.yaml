@@ -1,0 +1,11 @@
+defaults:
+  - globals
+  - phi_training: V_function_for_Fig1b
+  - theta_training: kernel_for_Fig1b
+  - data: linear_gaussian_for_Fig1b
+
+name: "Theta_training"
+
+device: "cpu"
+seed: null
+save_models: True

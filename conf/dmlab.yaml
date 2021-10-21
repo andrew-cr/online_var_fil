@@ -1,0 +1,25 @@
+defaults:
+  - globals
+
+name: 'dmlab'
+device: 'cuda'
+theta_window_size: 1
+phi_window_size: 1
+dataset_path: 'datasets\test1'
+decoder_path: 'vae_decoder.pt'
+U_scalar: 0.1
+V_scalar: 0.1
+theta_lr: 0.001
+num_iters: 4000
+phi_T_lr: 0.03
+phi_Tm1_lr: 0.003
+phi_iters: 200
+g_thresh: 100
+KRR_lambda: 0.1
+save_interval: 100
+init_res_scale: 0.1
+theta_dataset_size: 1024
+theta_net_update_steps: 128
+theta_net_minibatch_size: 32
+theta_net_lr: 0.001
+dir_mag_loss_balance: 0.5

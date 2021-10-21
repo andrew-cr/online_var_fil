@@ -1,0 +1,25 @@
+# @package _group_
+
+func_type: 'Vx_t'
+phi_lr: 1e-2
+initial_phi_lr: 1e-1
+phi_iters: 5000
+initial_phi_iters: 5000
+phi_decay: 0.999
+initial_phi_decay: 0.999
+phi_minibatch_size: 32
+phi_t_init_method: pred
+window_size: 1
+V_batch_size: 500
+V_lr: 1e-2
+V_minibatch_size: 10
+V_iters: 25
+KRR_lambda: 0.01
+KRR_sigma: 2
+KRR_train_sigma: True
+KRR_train_lam: False
+KRR_init_sigma_median: True
+approx_decay: 1.
+approx_with_filter: True
+save_models: True
+plot_diagnostics: False

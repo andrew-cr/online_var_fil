@@ -1,0 +1,26 @@
+# @package _group_
+
+func_type: 'kernel'
+theta_lr: 3e-2
+theta_lr_decay_type: 'robbins-monro' # robbins-monro or exponential
+num_steps_theta_lr_oom_drop: 5000 # Number of T steps to drop oom of theta lr
+robbins_monro_theta_lr_decay_rate: 0.6
+robbins_monro_theta_lr_decay_bias: 10 # lr decays faster for small values
+theta_minibatch_size: 32
+theta_updates_start_T: 5
+matrices_to_learn: 'FG'
+window_size: 1
+num_times_save_data: 100
+
+KRR_lambda: 0.0001
+KRR_sigma: 2
+KRR_train_sigma: True
+KRR_train_lam: False
+KRR_init_sigma_median: True
+approx_decay: 1.
+approx_with_filter: True
+kernel_batch_size: 1000
+train_kernel_iters: 1
+train_kernel_minibatch_size: 100
+train_kernel_dataset_size: 100
+train_kernel_lr: 1e-3

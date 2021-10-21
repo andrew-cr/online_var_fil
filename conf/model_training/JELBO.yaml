@@ -1,0 +1,14 @@
+# @package _group_
+
+func_type: 'JELBO'
+q_hidden_dims: [100]
+phi_lr: 1e-2
+phi_iters: 500
+phi_minibatch_size: 10
+phi_t_init_method: pred
+window_size: 1
+save_models: True
+plot_diagnostics: False
+evaluate_elbo: False
+evaluate_final_elbo: False
+evaluate_elbo_num_samples: 2500

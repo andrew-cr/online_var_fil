@@ -1,0 +1,12 @@
+# @package _group_
+#  Data params
+path_to_data: null
+dim: 10
+F_min_eigval: 0.5
+F_max_eigval: 1
+G_min_eigval: 0.5
+G_max_eigval: 1
+diagFG: True
+U_std: 0.1
+V_std: 0.1
+num_data: 10

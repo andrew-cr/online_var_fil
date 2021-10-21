@@ -1,0 +1,12 @@
+defaults:
+  - globals
+  - model_training: V_function_for_Fig1a
+  - data: linear_gaussian
+
+name: "Train"
+
+# system
+device: "cpu"
+seed: null
+
+
