@@ -17,30 +17,25 @@ import matplotlib.pyplot as plt
 import time
 from torch.distributions import Independent, Normal, MultivariateNormal
 
-NOTEBOOK_MODE = False
 
 def save_np(name, x):
-    if not NOTEBOOK_MODE:
-        np.save(name, x)
+    np.save(name, x)
 
 
-@hydra.main(config_path='conf', config_name="fig1b")
+@hydra.main(config_path='conf', config_name="linearGaussianModelLearning")
 def main(cfg):
-    if not NOTEBOOK_MODE:
-        utils.save_git_hash(hydra.utils.get_original_cwd())
+    utils.save_git_hash(hydra.utils.get_original_cwd())
     device = cfg.device
 
     seed = np.random.randint(0, 9999999) if cfg.seed is None else cfg.seed
     print("seed", seed)
-    if not NOTEBOOK_MODE:
-        with open('seed.txt', 'w') as f:
-            f.write(str(seed))
+    with open('seed.txt', 'w') as f:
+        f.write(str(seed))
     np.random.seed(seed)
     torch.manual_seed(seed)
 
     saved_models_folder_name = 'saved_models'
-    if cfg.save_models and not NOTEBOOK_MODE:
-        os.mkdir(saved_models_folder_name)
+    os.mkdir(saved_models_folder_name)
 
 
     # ------------------- Construct data -----------------------
@@ -369,19 +364,14 @@ def main(cfg):
             cfg.theta_training.window_size, theta_dim, get_model_parameters,
             add_theta_grads_to_params
         )
-    theta_optim = torch.optim.Adam(get_model_parameters(),
-        lr=cfg.theta_training.theta_lr)
-    if cfg.theta_training.theta_lr_decay_type == 'exponential':
-        theta_decay = torch.optim.lr_scheduler.StepLR(theta_optim,
-            step_size=1, gamma=np.exp(
-                (1/cfg.theta_training.num_steps_theta_lr_oom_drop) * np.log(0.1)))
-    elif cfg.theta_training.theta_lr_decay_type == 'robbins-monro':
-        lr_decay_rate = cfg.theta_training.robbins_monro_theta_lr_decay_rate
-        lr_decay_bias = cfg.theta_training.robbins_monro_theta_lr_decay_bias
-        theta_decay = torch.optim.lr_scheduler.LambdaLR(theta_optim,
-            lr_lambda=lambda epoch: lr_decay_bias / (lr_decay_bias + epoch ** lr_decay_rate))
-    else:
-        raise NotImplementedError
+
+    theta_optim = torch.optim.SGD(get_model_parameters(),
+        lr=cfg.theta_training.theta_lr
+    )
+    theta_decay = utils.make_lr_scheduler(theta_optim,
+        cfg.theta_training.theta_lr_decay_type,
+        cfg.theta_training.theta_lr_num_steps_oom_drop
+    )
 
     rmle = models.LinearRMLEDiagFG(np.zeros((DIM,1)), np.eye(DIM),
         F_init.detach().cpu().numpy().copy() if 'F' in cfg.theta_training.matrices_to_learn else F.detach().cpu().numpy().copy(),
@@ -489,15 +479,20 @@ def main(cfg):
                 phi_decay.step()
 
             if T >= cfg.phi_training.window_size - 1:
-                phi_model.update_V_t(y, cfg.phi_training.V_batch_size)
-                Vx_optim = torch.optim.Adam(phi_model.get_V_t_params(),
+                kernel_inputs, *kernel_targets = phi_model.generate_training_dataset(
+                    y, cfg.phi_training.V_batch_size
+                )
+                phi_model.update_func_t(kernel_inputs, *kernel_targets)
+
+                Vx_optim = torch.optim.Adam(phi_model.get_func_t_params(),
                     lr=cfg.phi_training.V_lr)
                 for k in range(cfg.phi_training.V_iters):
                     Vx_optim.zero_grad()
-                    V_loss, _, _ = phi_model.V_t_loss(y,
+                    V_loss, _, _ = phi_model.func_t_loss(y,
                         cfg.phi_training.V_minibatch_size)
                     V_loss.backward()
                     Vx_optim.step()
+
         elif cfg.phi_training.func_type in ['JELBO', 'VJF']:
             phi_optim = torch.optim.Adam(phi_model.get_phi_T_params(),
                                          lr=cfg.phi_training.phi_lr)

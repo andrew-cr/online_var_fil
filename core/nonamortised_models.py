@@ -51,6 +51,8 @@ class NonAmortizedModelBase(nn.Module):
         self.phi_t_init_method = phi_t_init_method
         self.window_size = window_size
 
+        self.amortised = False
+
     def advance_timestep(self, y_T):
         # Prepare the model when new data arrives, should be called for every T >= 0
         # The most recent window_size modules are optimized
@@ -215,6 +217,14 @@ class NonAmortizedModelBase(nn.Module):
         return Independent(Normal(*q_t_stats), 1).log_prob(x_t).unsqueeze(1)
 
     def compute_r_t(self, x_t, y_t, *q_tm1_stats, x_tm1=None, t=None):
+        """
+            Compute r_t(x_{t-1}, x_t) = log (p(x_t|x_{t-1}) p(y_t|x_t) / q(x_{t-1}|x_t))
+            q_tm1_stats is the conditional statistics of x_{t-1} (thus should be a function of x_t, and potentially
+            x_{t+1:...} depending on the sampling distribution)
+            This form of r_t is used to avoid unnecessary telescoping when summing sequences of r_t
+            This is not the r_t = log (p(x_t|x_{t-1}) p(y_t|x_t) / (q(x_{t-1}|x_t) q(x_t) / q(x_{t-1}))) in the paper.
+            Therefore, adjustments need to be made for each sum of r_t
+        """
         if t is None:
             t = self.T
         if t == 0:
@@ -224,21 +234,31 @@ class NonAmortizedModelBase(nn.Module):
         else:
             log_p_t = self.compute_log_p_t(x_t, y_t, x_tm1, t=t)
             log_p_x_t, log_p_y_t = log_p_t["log_p_x_t"], log_p_t["log_p_y_t"]
-            log_q_x_tm1 = self.compute_log_q_t(x_tm1, *q_tm1_stats)
+            log_q_x_tm1 = self.compute_log_q_t(x_tm1, *q_tm1_stats)  # Compute log_q_x_tm1 from q_tm1_stats
             r_t = log_p_x_t + log_p_y_t - log_q_x_tm1
         return r_t
 
-    def sample_and_compute_r_t(self, y_t, num_samples, detach_x=False, t=None, disperse_temp=1):
+    def sample_and_compute_r_t(self, y_t, num_samples, t=None, disperse_temp=1):
+        """
+            Sample x_t (detached) and x_{t-1} from k(x_{t-1}|x_t) and compute r_t(x_{t-1}(phi, x_t), x_t)
+            The distribution of x_t is somewhat arbitrary, we use the best available distribution q(x_t|y_T) by default
+            disperse_temp can control the dispersion of x_t, smaller temp between 0 and 1 can disperse samples more
+            x_{t-1} is a function of phi and x_t
+            This function is intended to be used for the approximate functional update iterations
+        """
         if t is None:
             t = self.T - self.window_size + 1
-        x_t, q_t_stats = self.sample_joint_q_t(num_samples, self.T - t, detach_x=detach_x)
-        x_t, q_t_stats = x_t[0], q_t_stats[0]
-        x_t_dispersed = x_t + torch.randn_like(x_t) * np.sqrt(1/disperse_temp - 1) * q_t_stats[1]
+        with torch.no_grad():  # Detach x_t
+            x_t, q_t_stats = self.sample_joint_q_t(num_samples, self.T - t)
+            x_t, q_t_stats = x_t[0], q_t_stats[0]
+            # Add dispersion noise
+            x_t_dispersed = x_t + torch.randn_like(x_t) * np.sqrt(1/disperse_temp - 1) * q_t_stats[1]
+        x_t_dispersed = x_t_dispersed.detach().requires_grad_()
         if t == 0:
             x_tm1 = None
             r_t = self.compute_r_t(x_t_dispersed, y_t, t=0)
         else:
-            x_tm1, cond_q_tm1_stats = self.sample_q_t_cond_T(x_t_dispersed, 1, detach_x=detach_x, T=t)
+            x_tm1, cond_q_tm1_stats = self.sample_q_t_cond_T(x_t_dispersed, 1, detach_x=False, T=t)
             x_tm1, cond_q_tm1_stats = x_tm1[0], cond_q_tm1_stats[0]
             r_t = self.compute_r_t(x_t_dispersed, y_t, *cond_q_tm1_stats, x_tm1=x_tm1, t=t)
         return {"x_tm1": x_tm1, "x_t": x_t_dispersed, "r_t": r_t}
@@ -248,6 +268,9 @@ class NonAmortizedModelBase(nn.Module):
         """
             Sample from q(x_T) k(x_{(T-window_size):(T-1)} | x_T) and compute r_{(T-window_size+1):T}
             as well as other useful quantities
+            Return r_values of length min(window_size, T + 1); x_samples, all_q_stats of length num_steps_back + 1 (
+            = T + 1 if T < window_size else = window_size + 1)
+            The time index of first x in x_samples, all_q_stats is 0 if T < window_size else T - window_size
         """
         if T is None:
             T = self.T
@@ -257,8 +280,8 @@ class NonAmortizedModelBase(nn.Module):
         window_size = min(window_size, T + 1)
         num_steps_back = min(window_size, T)
         x_samples, all_q_stats = self.sample_joint_q_t(num_samples, num_steps_back, detach_x=detach_x, T=T)
-        ts = np.arange(T - window_size + 1, T + 1)  # correspond to r_t, length window_size
-        x_t_idx = np.arange(T + 1) if window_size == T + 1 else \
+        ts = np.arange(T - window_size + 1, T + 1)  # correspond to times of r_t, length window_size
+        x_t_idx = np.arange(window_size) if window_size == T + 1 else \
             np.arange(1, window_size + 1)  # indices of x_t in x_samples to compute r_t, length window_size
         r_values = []  # r_t, length window_size
 
@@ -271,13 +294,15 @@ class NonAmortizedModelBase(nn.Module):
             if only_return_first_r:
                 break
 
-        log_q_x_T = self.compute_log_q_t(x_samples[-1], *all_q_stats[-1])
+        log_q_x_T = self.compute_log_q_t(x_samples[-1], *all_q_stats[-1])  # Filtering distribution at time T
 
         return {"x_samples": x_samples, "all_q_stats": all_q_stats,
                 "r_values": r_values, "log_q_x_T": log_q_x_T}
 
     def generate_data(self, T):
-        # Generates hidden states and observations up to time T
+        """
+            Generates hidden states and observations (length T)
+        """
         x = torch.zeros((T, self.xdim)).to(self.device)
         y = torch.zeros((T, self.ydim)).to(self.device)
 
@@ -320,32 +345,32 @@ class NonAmortizedModelBase(nn.Module):
 class Vx_t_phi_t_Model(NonAmortizedModelBase):
     def __init__(self, device, xdim, ydim, q_0_mean, q_0_log_std, cond_q_mean_net_constructor, cond_q_0_log_std,
                  F_fn, G_fn, p_0_dist, phi_t_init_method, window_size,
-                 V_func_constructor, init_sigma_median, approx_decay, approx_with_filter,
+                 approx_func_constructor, init_sigma_median, approx_decay, approx_with_filter,
                  num_params_to_store=None):
         super().__init__(device, xdim, ydim, q_0_mean, q_0_log_std, cond_q_mean_net_constructor, cond_q_0_log_std,
                          F_fn, G_fn, p_0_dist, phi_t_init_method, window_size,
                          num_params_to_store)
-        self.V_func_constructor = V_func_constructor
+        self.approx_func_constructor = approx_func_constructor
         self.init_sigma_median = init_sigma_median
-        # self.V_func_t = self.V_func_constructor()
         self.approx_decay = approx_decay
         self.approx_with_filter = approx_with_filter
 
     def advance_timestep(self, y_T):
         super().advance_timestep(y_T)
         if self.T == self.window_size - 1:
-            self.V_func_t = self.V_func_constructor()
+            self.approx_func_t = self.approx_func_constructor()
 
         elif self.T > self.window_size - 1:
-            self.V_func_tm1 = self.V_func_t
-            self.V_func_t = self.V_func_constructor()
-            self.V_func_t.load_state_dict(self.V_func_tm1.state_dict())
-            self.V_func_tm1.requires_grad_(False)
-            self.V_func_tm1.eval()
+            self.approx_func_tm1 = self.approx_func_t
+            self.approx_func_t = self.approx_func_constructor()
+            self.approx_func_t.load_state_dict(self.approx_func_tm1.state_dict())
+            self.approx_func_tm1.requires_grad_(False)
+            self.approx_func_tm1.eval()
 
-    def update_V_t(self, y, num_samples, t=None, disperse_temp=1):
+    def generate_training_dataset(self, y, num_samples, t=None, disperse_temp=1):
         """
-            Updates V_t using q(x_{tm1:T})
+            Generate training dataset for updating approx_func_t
+            Returns x variable x_t and the corresponding values of V_t at x_t
         """
         if t is None:
             t = self.T - self.window_size + 1  # By default, we update V_t at time T (V_T when window_size=1)
@@ -362,7 +387,7 @@ class Vx_t_phi_t_Model(NonAmortizedModelBase):
                                                    self.q_t_log_std_list[t].detach().exp())
                     r_t -= log_q_t
                 dr_t_x_t = torch.autograd.grad(r_t.sum(), x_t, retain_graph=True)[0]
-                Vx_tm1_dx_tm1_x_t = torch.zeros_like(dr_t_x_t)
+                T_tm1_dx_tm1_x_t = torch.zeros_like(dr_t_x_t)
                 V_tm1 = torch.zeros_like(r_t)
 
             else:
@@ -375,66 +400,47 @@ class Vx_t_phi_t_Model(NonAmortizedModelBase):
                     r_t += (log_q_tm1 - log_q_t)
                 dr_t_x_t = torch.autograd.grad(r_t.sum(), x_t, retain_graph=True)[0]
                 with torch.no_grad():
-                    Vx_tm1, V_tm1 = self.V_func_tm1(x_tm1)
-                Vx_tm1_dx_tm1_x_t = torch.autograd.grad((Vx_tm1 * x_tm1).sum(),
+                    T_tm1, V_tm1 = self.approx_func_tm1(x_tm1)
+                T_tm1_dx_tm1_x_t = torch.autograd.grad((T_tm1 * x_tm1).sum(),
                                                         x_t, retain_graph=True)[0]
 
-            # Fit new V_func
-            if self.init_sigma_median and t == 0:
-                self.V_func_t.kernel.log_sigma.data = torch.tensor(
-                    np.log(utils.estimate_median_distance(x_t)).astype(float)).to(self.device)
-                print("Update bandwidth to ", self.V_func_t.kernel.log_sigma.exp().item())
+            return x_t.detach(), \
+                (dr_t_x_t + self.approx_decay * T_tm1_dx_tm1_x_t).detach(), \
+                (r_t + self.approx_decay * V_tm1).detach()
 
-            self.V_func_t.fit(x_t.detach(),
-                              (dr_t_x_t + self.approx_decay * Vx_tm1_dx_tm1_x_t).detach(),
-                              (r_t + self.approx_decay * V_tm1).detach())
-        else:
-            print("t < 0, V_t not updated")
-
-    def V_t_loss(self, y, num_samples, t=None, disperse_temp=1):
+    def update_func_t(self, train_input, *train_outputs, t=None):
+        """
+            Fit gradient estimators
+        """
         if t is None:
-            t = self.T - self.window_size + 1  # By default, we update V_t at time T (V_T when window_size=1)
+            t = self.T - self.window_size + 1
         if t >= 0:
-            self.V_func_t.train()
-            # self.zero_grad()
+            if self.init_sigma_median and t == 0:
+                self.approx_func_t.kernel.log_sigma.data = torch.tensor(
+                    np.log(utils.estimate_median_distance(train_input)).astype(float)).to(self.device)
+                print("Update bandwidth to ", self.approx_func_t.kernel.log_sigma.exp().item())
 
-            r_results = self.sample_and_compute_r_t(y[t, :], num_samples, t=t, disperse_temp=disperse_temp)
-            x_t = r_results["x_t"]
-            r_t = r_results["r_t"]
-
-            if t == 0:
-                if self.approx_with_filter:
-                    log_q_t = self.compute_log_q_t(x_t, self.q_t_mean_list[t].detach(),
-                                                   self.q_t_log_std_list[t].detach().exp())
-                    r_t -= log_q_t
-                dr_t_x_t = torch.autograd.grad(r_t.sum(), x_t, retain_graph=True)[0]
-                Vx_tm1_dx_tm1_x_t = torch.zeros_like(dr_t_x_t)
-                V_tm1 = torch.zeros_like(r_t)
-
-            else:
-                x_tm1 = r_results["x_tm1"]
-                if self.approx_with_filter:
-                    log_q_t = self.compute_log_q_t(x_t, self.q_t_mean_list[t].detach(),
-                                                   self.q_t_log_std_list[t].detach().exp())
-                    log_q_tm1 = self.compute_log_q_t(x_tm1, self.q_t_mean_list[t - 1].detach(),
-                                                     self.q_t_log_std_list[t - 1].detach().exp())
-                    r_t += (log_q_tm1 - log_q_t)
-                dr_t_x_t = torch.autograd.grad(r_t.sum(), x_t, retain_graph=True)[0]
-                with torch.no_grad():
-                    Vx_tm1, V_tm1 = self.V_func_tm1(x_tm1)
-                Vx_tm1_dx_tm1_x_t = torch.autograd.grad((Vx_tm1 * x_tm1).sum(),
-                                                        x_t, retain_graph=True)[0]
-
-            preds = self.V_func_t(x_t.detach())[0]
-            targets = (dr_t_x_t + self.approx_decay * Vx_tm1_dx_tm1_x_t).detach()
-
-            # preds = self.V_func_t(x_t.detach())[1]
-            # targets = (r_t + self.approx_decay * V_tm1).detach()
-
-            return torch.mean((preds - targets) ** 2), preds, targets
-
+            self.approx_func_t.fit(train_input, *train_outputs)
         else:
-            print("t < 0, V_t not updated")
+            print("t < 0, func_t not updated")
+
+    def func_t_loss(self, train_input, *train_outputs):
+        """
+            Compute MSE loss of approx_func_t
+            The losses are balanced by weights
+            Return the averaged loss, preds = approx_func_t(train_input), and componentwise losses
+        """
+        preds = self.approx_func_t(train_input)
+        losses = []
+        for i in range(len(train_outputs)):
+            if preds[i].shape[1] > 0:
+                losses.append(torch.mean((preds[i] - train_outputs[i]) ** 2))
+            else:
+                losses.append(torch.tensor(0.).to(self.device))
+        # output_dim = sum([train_outputs[i].shape[1] for i in range(len(train_outputs))])
+        weights = [0.25] * 4
+        loss = sum([losses[i] * weights[i] for i in range(len(train_outputs))])
+        return loss, preds, losses
 
     def populate_phi_grads(self, y, num_samples):
         # self.zero_grad()
@@ -446,25 +452,25 @@ class Vx_t_phi_t_Model(NonAmortizedModelBase):
         log_q_x_T = all_r_results["log_q_x_T"]
 
         if self.T < self.window_size:
-            Vx_tm1_x_tm1 = torch.zeros_like(sum_r)
+            T_tm1_x_tm1 = torch.zeros_like(sum_r)
             V_tm1 = torch.zeros_like(sum_r)
 
         else:
             x_tm1 = all_r_results["x_samples"][0]
             with torch.no_grad():
-                Vx_tm1, V_tm1 = self.V_func_tm1(x_tm1)
-            Vx_tm1_x_tm1 = (Vx_tm1 * x_tm1).sum(1, keepdim=True)
+                T_tm1, V_tm1 = self.approx_func_tm1(x_tm1)
+            T_tm1_x_tm1 = (T_tm1 * x_tm1).sum(1, keepdim=True)
             if self.approx_with_filter:
                 log_q_x_tm1 = self.compute_log_q_t(x_tm1, self.q_t_mean_list[self.T - self.window_size].detach(),
                                                    self.q_t_log_std_list[self.T - self.window_size].detach().exp())
                 sum_r += log_q_x_tm1
 
-        loss = - (sum_r + Vx_tm1_x_tm1 - log_q_x_T - Vx_tm1_x_tm1.detach() + V_tm1.detach()).mean()
+        loss = - (sum_r + T_tm1_x_tm1 - log_q_x_T - T_tm1_x_tm1.detach() + V_tm1.detach()).mean()
         loss.backward()
         return loss
 
-    def get_V_t_params(self):
-        return self.V_func_t.parameters()
+    def get_func_t_params(self):
+        return self.approx_func_t.parameters()
 
 
 class Ignore_Past_phi_t_Model(NonAmortizedModelBase):
@@ -602,6 +608,8 @@ class ExtendedKalmanFilter(nn.Module):
         self.q_tm1_mean_list = []
         self.q_tm1_cov_list = []
 
+        self.amortised = False
+
     def advance_timestep(self, y_T):
         self.T += 1
 
@@ -660,6 +668,8 @@ class EnsembleKalmanFilter(nn.Module):
         self.x_Tm1 = None
         self.x_T = None
 
+        self.amortised = False
+
     def advance_timestep(self, y_T):
         self.T += 1
         if self.T > 0:
@@ -715,6 +725,8 @@ class BootstrapParticleFilter(nn.Module):
 
         # Initial weights (1/num_particles)
         self.log_w = np.log(1 / self.num_particles) * torch.ones((self.num_particles, 1), device=self.device)
+
+        self.amortised = False
 
     def advance_timestep(self, y_T):
         self.T += 1
@@ -837,7 +849,7 @@ class KernelRidgeRegressor(nn.Module):
             self.update_K()
 
         # this computes G.t() @ K^{-1}
-        GKinv = torch.solve(G, self.K)[0].t()
+        GKinv = torch.linalg.solve(self.K, G).t()
 
         if not self.centre_elbo:
             if index is None:
@@ -880,6 +892,7 @@ class KernelRidgeRegressor(nn.Module):
                 self.update_K()
         return self
 
+
 class ThetaGrad():
     """
         Add on to a NonArmotizedModelBase that will learn theta gradients
@@ -889,7 +902,7 @@ class ThetaGrad():
         window_size: >=1 how far back the function estimator comes in
         get_theta_parameters: Function that returns the theta params to learn
         add_theta_grads_to_params: Function which takes tensor of size (theta_dim)
-            and adds that tensor to the appropriate gradients of the appropriate 
+            and adds that tensor to the appropriate gradients of the appropriate
             theta parameters.
     """
     def __init__(self, device, model_base, theta_func_constructor,
@@ -920,7 +933,7 @@ class ThetaGrad():
         return self.theta_func_TmL.parameters()
 
     def generate_training_dataset(self, N, y):
-        # Generates input-output pairs to train theta_func_TmL 
+        # Generates input-output pairs to train theta_func_TmL
 
         assert self.mb.T >= self.window_size
 
@@ -933,7 +946,7 @@ class ThetaGrad():
                 culm_idx += grad.shape[0]
             assert culm_idx == self.theta_dim
             return output
-            
+
 
         if self.mb.T > self.window_size:
             x_samples, _ = self.mb.sample_joint_q_t(N, self.window_size+1, True)
@@ -1001,11 +1014,11 @@ class ThetaGrad():
             for i in range(self.mb.T+1):
                 log_p_t = self.mb.compute_log_p_t(
                     x_samples_1[i], y[i, :],
-                    x_samples_1[i-1] if i > 0 else None, 
+                    x_samples_1[i-1] if i > 0 else None,
                     t=i
                 )
                 s_sum_1 += log_p_t['log_p_x_t'] + log_p_t['log_p_y_t']
-            
+
             s_sum_2 = 0
             for i in range(self.mb.T):
                 log_p_t = self.mb.compute_log_p_t(
@@ -1110,10 +1123,10 @@ class ThetaGradVJF(ThetaGrad):
         torch.mean(-s).backward()
 
 
-class NNFuncEstimator(nn.Module):
-    def __init__(self, nn, input_dim, output_dim):
+class NN_Func(nn.Module):
+    def __init__(self, net, input_dim, output_dim, decay):
         super().__init__()
-        self.nn = nn
+        self.net = net
 
         # The statistics of the inputs to the NN function
         self.register_buffer('input_mean', torch.zeros((input_dim)))
@@ -1125,10 +1138,14 @@ class NNFuncEstimator(nn.Module):
 
         self.initial_update_norm = True
 
-    def update_normalization(self, train_inputs, train_outputs, decay):
+        self.decay = decay
+
+    def update_normalization(self, train_inputs, train_outputs):
         if self.initial_update_norm:
             decay = 0
             self.initial_update_norm = False
+        else:
+            decay = self.decay
 
         self.input_mean = decay * self.input_mean + \
                           (1 - decay) * torch.mean(train_inputs, dim=0)
@@ -1141,8 +1158,28 @@ class NNFuncEstimator(nn.Module):
 
     def forward(self, x):
         x_norm = (x - self.input_mean) / self.input_std
-        outputs_norm = self.nn(x_norm)
+        outputs_norm = self.net(x_norm)
         return self.output_mean + outputs_norm * self.output_std
+
+
+class NN_Func_Split(NN_Func):
+    def __init__(self, net, input_dim, output_dim, decay):
+        super().__init__(net, input_dim, output_dim, decay)
+        self.output_split_sizes = None
+
+    def update_normalization(self, train_inputs, *train_outputs):
+        if self.output_split_sizes is None:
+            self.output_split_sizes = [train_output.shape[-1] for train_output in train_outputs]
+        else:
+            assert self.output_split_sizes == [train_output.shape[-1] for train_output in train_outputs]
+
+        train_outputs = torch.cat(train_outputs, dim=-1)
+        super().update_normalization(train_inputs, train_outputs)
+
+    def forward(self, x):
+        output = super().forward(x)
+        return output.split(self.output_split_sizes, dim=-1)
+
 
 class NN_Func_Polar(nn.Module):
     """
@@ -1154,7 +1191,7 @@ class NN_Func_Polar(nn.Module):
         So the first bits of the output specify the direction and the last bit
         is the log magnitude of the gradient.
     """
-    def __init__(self, net, input_dim, grad_dim):
+    def __init__(self, net, input_dim, grad_dim, decay):
         super().__init__()
         self.net = net
         self.grad_dim = grad_dim
@@ -1166,10 +1203,14 @@ class NN_Func_Polar(nn.Module):
 
         self.initial_update_norm = True
 
-    def update_normalization(self, train_inputs, train_outputs, decay):
+        self.decay = decay
+
+    def update_normalization(self, train_inputs, train_outputs):
         if self.initial_update_norm:
             decay = 0
             self.initial_update_norm = False
+        else:
+            decay = self.decay
 
         self.input_mean = decay * self.input_mean + \
             (1 - decay) * torch.mean(train_inputs, dim=0)
@@ -1196,6 +1237,7 @@ class NN_Func_Polar(nn.Module):
 
         output_dir_norms = torch.sum(torch.abs(output_dir), dim=-1).unsqueeze(-1)
         return (output_dir / output_dir_norms) * torch.exp(log_mag)
+
 
 class LinearRMLEDiagFG():
     """
@@ -1297,7 +1339,7 @@ class LinearRMLEDiagFG():
         if not self.first_update:
             if 'G' in self.matrices_to_learn:
                 self.G = self.G + self.step_size * \
-                    np.diag(G_grad_term - self.G_prev_grad_term) 
+                    np.diag(G_grad_term - self.G_prev_grad_term)
             if 'F' in self.matrices_to_learn:
                 self.F = self.F + self.step_size * \
                     np.diag(F_grad_term - self.F_prev_grad_term)

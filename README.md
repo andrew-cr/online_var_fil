@@ -4,7 +4,9 @@
 
 ##  Variational Filtering
 
-To run phi learning on linear gaussian (Fig1a)
+### Experiments in main paper
+
+To run phi learning on linear gaussian (Fig1a) (x)
 ```
 python linear_gaussian_phi_learning.py
 ```
@@ -12,14 +14,35 @@ To run phi and theta learning on linear gaussian (Fig1b)
 ```
 python linear_gaussian_model_learning.py
 ```
-To run CTRNN experiment
+To run Chaotic RNN online filtering (Fig2a)
 ```
-python CTRNN_run_with_hydra.py
+python CRNN_filtering.py --config = something
 ```
-To run sequential VAE experiment
+To run Chaotic RNN comparison with offline objective (Fig2b)
 ```
-python dmlab.py
+python CRNN_filtering.py --config = something else
 ```
+To run sequential VAE experiment (Fig3)
+```
+python seqVAE.py
+```
+
+### Experiments in appendix
+
+To run amortized linear gaussian model learning
+```
+python linear_gaussian_model_learning_amortized.py
+```
+To run Chaotic RNN amortized filtering
+```
+python CRNN_amortized.py
+```
+To run amortized sequential VAE
+```
+python seqVAE_amortized.py
+```
+
+
 
 # Dependencies
     - pytorch

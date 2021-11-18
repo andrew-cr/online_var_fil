@@ -148,17 +148,16 @@ def gaussian_posterior(y, prior_mean, prior_cov, G, V, G_fn=None):
     return post_mean, post_cov
 
 def sample_cov(x, y=None, w=None):
-    assert len(x.shape) == 2
     if w is None:
-        w = 1 / x.shape[0] * torch.ones((x.shape[0], 1)).to(x.device)
+        w = 1 / x.shape[-2] * torch.ones((x.shape[-2], 1)).to(x.device)
     else:
-        w = w.view(x.shape[0], 1)
-    x_centred = x - (x * w).sum(0)
+        w = w.view(*x.shape[:-1], 1)
+    x_centred = x - (x * w).sum(-2, keepdim=True)
     if y is None:
         y_centred = x_centred
     else:
-        y_centred = y - (y * w).sum(0)
-    cov = (w * x_centred).t() @ y_centred / (1 - (w**2).sum())
+        y_centred = y - (y * w).sum(-2, keepdim=True)
+    cov = (w * x_centred).transpose(-2, -1) @ y_centred / (1 - (w**2).sum(-2, keepdim=True))
     return cov
 
 def ess(log_w):
@@ -222,3 +221,15 @@ class TimeStore(nn.Module):
             raise ValueError("TimeStore attempting to access deleted entry")
 
         return self.list[adjusted_idx]
+
+def make_lr_scheduler(opt, decay_type, num_steps_oom_drop=None):
+    if decay_type == 'exponential':
+        lr_scheduler = torch.optim.lr_scheduler.StepLR(opt, step_size=1, gamma=np.exp(
+            (1 / num_steps_oom_drop) * np.log(0.1)))
+    elif decay_type == 'robbins-monro':
+        lr_decay_bias = num_steps_oom_drop / 9
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lambda iter: lr_decay_bias / (
+                lr_decay_bias + iter))
+    elif decay_type == 'none':
+        lr_scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lambda iter: 1)
+    return lr_scheduler

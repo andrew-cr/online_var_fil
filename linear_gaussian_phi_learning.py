@@ -21,7 +21,7 @@ def save_np(name, x):
     np.save(name, x)
 
 
-@hydra.main(config_path='conf', config_name="fig1a")
+@hydra.main(config_path='conf', config_name="linearGaussianPhiLearning")
 def main(cfg):
     assert cfg.data.diagFG
     utils.save_git_hash(hydra.utils.get_original_cwd())
@@ -173,7 +173,6 @@ def main(cfg):
     x_Tm1_means = []
     x_Tm1_covs = []
     joint_kls = []
-    Z_losses = []
     times = []
 
     for T in tqdm(range(0, cfg.data.num_data)):
@@ -214,11 +213,16 @@ def main(cfg):
                 ))
             phi_lr_decay.step()
 
-        model.update_V_t(y, cfg.model_training.V_batch_size)
-        Vx_optim = torch.optim.Adam(model.get_V_t_params(), lr=cfg.model_training.V_lr)
+        Vx_optim = torch.optim.Adam(model.get_func_t_params(), lr=cfg.model_training.V_lr)
+
+        kernel_inputs, *kernel_targets = model.generate_training_dataset(
+            y, cfg.model_training.V_batch_size 
+        )
+        model.update_func_t(kernel_inputs, *kernel_targets)
+
         for k in range(cfg.model_training.V_iters):
             Vx_optim.zero_grad()
-            V_loss, _, _ = model.V_t_loss(y, cfg.model_training.V_minibatch_size)
+            V_loss, _, _ = model.func_t_loss(y, cfg.model_training.V_minibatch_size)
             V_loss.backward()
             Vx_optim.step()
 
@@ -229,7 +233,6 @@ def main(cfg):
         # filter_stds.append(np.exp(model.q_t_log_std_list[T].detach().numpy()))
 
         times.append(end_time - start_time)
-
 
         if (T % (round(max(cfg.data.num_data, 10) / 10)) == 0) or (T == cfg.data.num_data - 1):
             save_np('filter_means.npy', np.array(filter_means))

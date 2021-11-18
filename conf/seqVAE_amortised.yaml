@@ -1,0 +1,29 @@
+defaults:
+  - globals
+
+name: 'seqVAEAmortised'
+device: 'cpu'
+theta_window_size: 1
+phi_window_size: 1
+dataset_path: 'datasets\test1'
+decoder_path: 'vae_decoder.pt'
+U_scalar: 0.1
+V_scalar: 0.1
+theta_lr: 0.001
+num_iters: 4000
+phi_lr: 0.001
+phi_iters: 200
+phi_minibatch_size: 32
+KRR_lambda: 0.1
+save_interval: 100
+init_res_scale: 0.1
+training_dataset_size: 256
+net_update_steps: 128
+net_minibatch_size: 64
+net_lr: 0.001
+dir_mag_loss_balance: 0.5
+q_hidden_dims: [64, 64]
+window_size: 1
+rnn_window_size: 10
+KRR_lambda: 0.1
+approx_with_filter: True

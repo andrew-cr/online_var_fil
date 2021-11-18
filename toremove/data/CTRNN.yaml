@@ -9,4 +9,4 @@ tau: 0.025
 U_std: 1e-1
 V_scale: 1e-1
 V_df: 2
-num_data: 500
+num_data: 100

@@ -1,0 +1,67 @@
+defaults:
+  - globals
+
+name: "linearGaussianModelLearningAmortized"
+device: "cpu"
+seed: null
+
+phi_training:
+  func_type: 'separate_time_kernel_amortised'
+  q_rnn_type: "RNN"
+  q_net_type: "MLP"
+  q_rnn_hidden_dim: 100
+  q_rnn_num_layers: 1
+  q_hidden_dims: [100]
+  phi_lr: 1e-5 # More stable with small learning rate
+  phi_lr_decay_type: 'exponential' #'robbins-monro'
+  phi_lr_num_steps_oom_drop: 1000000000
+  phi_iters: 100
+  phi_minibatch_size: 100
+  phi_grad_clip_norm: 1000000
+
+  back_log_length: 10
+
+  rnn_window_size: 10
+  approx_with_filter: True
+
+  approx_iters: 1
+  approx_lr: 2e-4
+  approx_minibatch_size: 32
+
+  kernel_batch_size: 512
+  kernel_train_set_size: 128
+  KRR_lambda: 0.1
+  KRR_sigma: 2
+  KRR_train_sigma: True
+  KRR_train_lam: False
+  KRR_centre_elbo: True
+  disperse_temp: 1
+
+  save_models: True
+  plot_diagnostics: False
+  evaluate_elbo: False
+  evaluate_final_elbo: False
+  evaluate_elbo_num_samples: 500
+  num_times_save_data: 1000
+
+theta_training:
+  func_type: 'kernel'
+  theta_lr: 3e-2
+  theta_lr_decay_type: 'robbins-monro' # robbins-monro or exponential
+  theta_lr_num_steps_oom_drop: 5000 # Number of T steps to drop oom of theta lr
+  theta_minibatch_size: 1024
+  theta_updates_start_T: 1000 # Need to allow time for covariance estimate to reach equilibrium point
+  matrices_to_learn: 'FG'
+  window_size: 1
+
+data:
+  path_to_data: null
+  dim: 10
+  F_min_eigval: 0.5
+  F_max_eigval: 1
+  G_min_eigval: 0.5
+  G_max_eigval: 1
+  diagFG: True
+  U_std: 0.1
+  V_std: 0.25
+  num_data: 50000

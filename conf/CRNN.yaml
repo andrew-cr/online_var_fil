@@ -1,0 +1,51 @@
+defaults:
+  - globals
+
+name: "CRNN"
+
+# system
+device: "cpu"
+seed: null
+
+model_training:
+  func_type: 'Vx_t'
+  q_hidden_dims: [100]
+  phi_lr: 1e-2
+  phi_lr_decay_type: exponential
+  phi_lr_num_steps_oom_drop: 100000000 # No decay
+  phi_iters: 500
+  phi_minibatch_size: 10
+  phi_t_init_method: pred
+  window_size: 1
+  kernel_batch_size: 100
+  approx_lr: 1e-2
+  kernel_train_set_size: 100
+  approx_minibatch_size: 10
+  approx_iters: 25
+  KRR_lambda: 0.1
+  KRR_sigma: 2
+  KRR_train_sigma: True
+  KRR_train_lam: False
+  KRR_init_sigma_median: True
+  KRR_centre_elbo: True
+  approx_decay: 1.
+  approx_with_filter: True
+  approx_updates_start_t: 0
+  approx_loss_write_freq: 10
+  save_models: True
+  plot_diagnostics: False
+  evaluate_elbo: False
+  evaluate_final_elbo: False
+  evaluate_elbo_num_samples: 2500
+
+data:
+  data_name: CRNN
+  path_to_data: null
+  dim: 5
+  grid_size: 0.001
+  gamma: 2.5
+  tau: 0.025
+  U_std: 1e-1
+  V_scale: 1e-1
+  V_df: 2
+  num_data: 100

@@ -23,7 +23,7 @@ def save_np(name, x):
 xDIM = 32
 yDIM = 3*32*32
 
-@hydra.main(config_path='conf', config_name="dmlab")
+@hydra.main(config_path='conf', config_name="seqVAE")
 def main(cfg):
     device = cfg.device
     utils.save_git_hash(hydra.utils.get_original_cwd())

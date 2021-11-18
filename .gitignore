@@ -1,0 +1,5 @@
+*__pycache__*
+outputs
+test1
+train1
+*.pt

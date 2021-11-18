@@ -12,6 +12,8 @@ import torch.nn.functional as F
 
 BATCH_SIZE = 32
 
+device = 'cpu'
+
 class MyData(torch.utils.data.Dataset):
     def __init__(self, img_dir):
         transform = torchvision.transforms.ToTensor()
@@ -23,10 +25,10 @@ class MyData(torch.utils.data.Dataset):
             image = transform(pil_image)
             self.data[i, :, :, :] = image
 
-        self.data = self.data.to('cuda')
+        self.data = self.data.to(device)
 
-        self.data_mean = torch.mean(self.data, dim=0).cuda()
-        self.data_std = torch.std(self.data, dim=0).cuda()
+        self.data_mean = torch.mean(self.data, dim=0).to(device)
+        self.data_std = torch.std(self.data, dim=0).to(device)
 
 
         self.data = (self.data - self.data_mean) / self.data_std
@@ -42,7 +44,7 @@ class MyData(torch.utils.data.Dataset):
 def unnormalize(x, dataset):
     return dataset.data_mean + x * dataset.data_std
 
-dataset = MyData(r'datasets\train1')
+dataset = MyData(r'datasets/train1')
 dataloader = torch.utils.data.DataLoader(dataset, BATCH_SIZE, shuffle=True)
 
 # Models from https://github.com/karpathy/deep-vector-quantization
@@ -133,7 +135,6 @@ class Model(nn.Module):
     def __init__(self):
         super().__init__()
         self.z_dim = 32
-        self.device = 'cuda'
 
         self.encoder = Encoder(self.z_dim)
         self.decoder = Decoder(self.z_dim)
@@ -152,7 +153,7 @@ class Model(nn.Module):
         z_stats = self.encoder(x)
         z = z_stats[:, 0:self.z_dim] + \
             torch.exp(z_stats[:, self.z_dim:]) * \
-                torch.randn(batch_size, self.z_dim, device=self.device)
+                torch.randn(batch_size, self.z_dim, device=device)
         images = self.decoder(z)
 
         neg_log_p_x_z = torch.sum(self.recon_loss(images, x), dim=[1,2,3])
@@ -167,18 +168,18 @@ class Model(nn.Module):
         return mean_neg_elbo
 
     def forward(self, num_samples):
-        z = torch.randn(num_samples, self.z_dim, device=self.device)
+        z = torch.randn(num_samples, self.z_dim, device=device)
         images = self.decoder(z)
         return images
 
-model = Model().cuda()
+model = Model().to(device)
 #%%
 
 optimizer = torch.optim.Adam(model.parameters(), lr=model.learning_rate)
 
 losses = []
 print("Training model")
-for epoch in tqdm(range(100)):
+for epoch in tqdm(range(2)): # change to 100
     for batch in dataloader:
         optimizer.zero_grad()
         loss = model.get_loss(batch)
@@ -191,7 +192,7 @@ plt.plot(losses)
 plt.show()
 
 #%%
-z = torch.randn(16, model.z_dim, device=model.device)
+z = torch.randn(16, model.z_dim, device=device)
 image_batch = model.decoder(z)
 fig, ax = plt.subplots(4, 4)
 for i in range(4):
