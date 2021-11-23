@@ -62,6 +62,11 @@ class AmortizedModelBase(nonamortised_models.NonAmortizedModelBase):
         self.q_rnn_hist_hn_list.append(None)  # length T + 1
         self.q_rnn_hist_output_list.append(None)  # length T + 1
 
+    def reset_timestep(self):
+        self.T = -1
+        self.q_rnn_hist_hn_list = []
+        self.q_rnn_hist_output_list = []
+
     def detach_rnn_hist_hn(self, y, t=None):
         # Detach and store the last rnn state in the window, should be called at the end of each T
         if t is None:
@@ -274,10 +279,8 @@ class Kernel_Amortised_Model(AmortizedModelBase):
         self.approx_decay = approx_decay
         self.approx_with_filter = approx_with_filter
 
-        def replace_none(x):
-            return x if x is not None else []
-        self.theta_dim = len(replace_none(self.get_theta_params(flatten=True)))
-        self.phi_dim = len(replace_none(self.get_phi_params(flatten=True)))
+        self.theta_dim = len(utils.replace_none(self.get_theta_params(flatten=True)))
+        self.phi_dim = len(utils.replace_none(self.get_phi_params(flatten=True)))
 
     def advance_timestep(self, y_T):
         super().advance_timestep(y_T)

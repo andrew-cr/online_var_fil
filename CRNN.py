@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 import core.amortised_models as amortised_models
 import core.nonamortised_models as nonamortised_models
+import core.networks as networks
 import core.utils as utils
 import math
 import subprocess
@@ -37,7 +38,9 @@ def main(cfg):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    x, y, x_np, y_np, xdim, ydim, F_fn, G_fn, p_0_dist = generate_data(cfg)
+    x_np, y_np, xdim, ydim, F_fn, G_fn, p_0_dist = generate_data(cfg)
+    x = torch.from_numpy(x_np).float().to(device)
+    y = torch.from_numpy(y_np).float().to(device)
 
     saved_models_folder_name = 'saved_models'
     if cfg.model_training.save_models:
@@ -61,12 +64,7 @@ def main(cfg):
 
         def cond_q_mean_net_constructor():
             net_dims = [xdim] + list(q_hidden_dims) + [xdim]
-            modules = []
-            for in_dim, out_dim in zip(net_dims[:-2], net_dims[1:-1]):
-                modules.append(nn.Linear(in_dim, out_dim))
-                modules.append(nn.ReLU())
-            modules.append(nn.Linear(net_dims[-2], net_dims[-1]))
-            return nn.Sequential(*modules).to(device)
+            return networks.MLP(net_dims, nn.ReLU).to(device)
 
         print("cond_q_mean_net: ", cond_q_mean_net_constructor())
         if cfg.model_training.func_type == 'Vx_t':
@@ -132,40 +130,35 @@ def main(cfg):
             q_rnn = nn.RNN(ydim, q_rnn_hidden_dim, q_rnn_num_layers).to(device)
         elif cfg.model_training.q_rnn_type == "LSTM":
             q_rnn = nn.LSTM(ydim, q_rnn_hidden_dim, q_rnn_num_layers).to(device)
+        elif cfg.model_training.q_rnn_type == "MLP":
+            q_rnn = networks.MLPRNN(
+                [ydim + 2 * xdim] + [q_rnn_hidden_dim] * q_rnn_num_layers + [2 * xdim], nn.ReLU
+            ).to(device)
+
         q_hidden_dims = cfg.model_training.q_hidden_dims  # Hidden dims of q_t_net and cond_q_t_net
 
-        def net_constructor(net_dims):
-            modules = []
-            for in_dim, out_dim in zip(net_dims[:-2], net_dims[1:-1]):
-                modules.append(nn.Linear(in_dim, out_dim))
-                modules.append(nn.ReLU())
-            modules.append(nn.Linear(net_dims[-2], net_dims[-1]))
-            return nn.Sequential(*modules).to(device)
-
-        class Normal_Net(nn.Module):
-            def __init__(self, mlp_module):
-                super().__init__()
-                self.mlp_module = mlp_module
-
-            def forward(self, x):
-                x = self.mlp_module(x)
-                mu, logsigma = torch.chunk(x, 2, dim=-1)
-                sig = functional.softplus(logsigma)
-                return mu, sig
-
         if cfg.model_training.q_net_type == "MLP":
-            q_t_net = Normal_Net(net_constructor([q_rnn_hidden_dim] + list(q_hidden_dims) + [2 * xdim])).to(device)
-            cond_q_t_net = Normal_Net(net_constructor([xdim + q_rnn_hidden_dim] + list(q_hidden_dims) + [2 * xdim])).to(
-                device)
+            q_t_net = networks.NormalNet(
+                networks.MLP(
+                    [q_rnn.hidden_size] + list(q_hidden_dims) + [2 * xdim],
+                    nn.ReLU, device
+                )
+            ).to(device)
+            cond_q_t_net = networks.NormalNet(
+                networks.MLP(
+                    [xdim + q_rnn.hidden_size] + list(q_hidden_dims) + [2 * xdim],
+                    nn.ReLU, device
+                )
+            ).to(device)
         elif cfg.model_training.q_net_type == "Identity":
-            q_t_net = Normal_Net(nn.Identity()).to(device)
-            cond_q_t_net = Normal_Net(net_constructor([xdim + q_rnn_hidden_dim] + list(q_hidden_dims) + [2 * xdim])).to(
-                device)
+            q_t_net = networks.NormalNet(nn.Identity()).to(device)
+            cond_q_t_net = networks.NormalNet(
+                networks.MLP(
+                    [xdim + q_rnn.hidden_size] + list(q_hidden_dims) + [2 * xdim], nn.ReLU
+                )
+            ).to(device)
         else:
             raise NotImplementedError
-
-        def replace_none(x):
-            return x if x is not None else []
 
         if cfg.model_training.func_type == 'kernel_amortised':
             sigma = cfg.model_training.KRR_sigma
@@ -220,10 +213,10 @@ def main(cfg):
             print("Approx net dim: ", sum(p.numel() for p in net_constructor_split().parameters()))
 
 
-        theta_dim = len(replace_none(model.get_theta_params(flatten=True)))
-        phi_dim = len(replace_none(model.get_phi_params(flatten=True)))
-        rnn_phi_dim = len(replace_none(model.get_rnn_phi_params(flatten=True)))
-        q_t_net_phi_dim = len(replace_none(model.get_q_t_net_phi_params(flatten=True)))
+        theta_dim = len(utils.replace_none(model.get_theta_params(flatten=True)))
+        phi_dim = len(utils.replace_none(model.get_phi_params(flatten=True)))
+        rnn_phi_dim = len(utils.replace_none(model.get_rnn_phi_params(flatten=True)))
+        q_t_net_phi_dim = len(utils.replace_none(model.get_q_t_net_phi_params(flatten=True)))
 
         print("Theta dim: ", theta_dim)
         print("Phi dim: ", phi_dim)
@@ -327,7 +320,6 @@ def main(cfg):
                     loss = model.populate_grads(y, cfg.model_training.phi_minibatch_size)
                     if cfg.model_training.phi_grad_clip_norm is not None:
                         phi_grad_norm = nn.utils.clip_grad_norm_(model.get_phi_params(), cfg.model_training.phi_grad_clip_norm)
-                        print("Phi grad norm: ", phi_grad_norm)
                         writer.add_scalar("model_training/phi_grad_norm", phi_grad_norm, T*cfg.model_training.phi_iters+k)
                     phi_optim.step()
                     phi_decay.step()
@@ -397,7 +389,7 @@ def main(cfg):
             if model.amortised:
                 model.detach_rnn_hist_hn(y)
 
-            # RELBO models: train functional approx_funcs
+            # Train functional approx_funcs
             if cfg.model_training.func_type in ['Vx_t', 'kernel_amortised', 'net_amortised'] and \
                     T >= max(cfg.model_training.window_size - 1, cfg.model_training.approx_updates_start_t):
                 approx_func_optim = torch.optim.Adam(model.get_func_t_params(), lr=cfg.model_training.approx_lr)
@@ -694,7 +686,7 @@ def generate_data(cfg):
         V_df = cfg.data.V_df
 
         W = torch.randn(xdim, xdim).to(device) / np.sqrt(xdim)
-        G = torch.eye(ydim)
+        G = torch.eye(ydim).to(device)
         mean_0 = torch.zeros(xdim).to(device)
         std_0 = U_std
 
@@ -750,11 +742,9 @@ def generate_data(cfg):
             save_np('W.npy', W.cpu().numpy())
 
         else:
-            path_to_data = hydra.utils.to_absolute_path(cfg.data.path_to_data) + '/'
+            path_to_data = hydra.utils.to_absolute_path(cfg.data.path_to_data)
             x_np = np.load(os.path.join(path_to_data, 'x_data.npy'))
             y_np = np.load(os.path.join(path_to_data, 'y_data.npy'))
-            x = torch.from_numpy(x_np).float().to(device)
-            y = torch.from_numpy(y_np).float().to(device)
 
             W_np = np.load(os.path.join(path_to_data, 'W.npy'))
             W = torch.from_numpy(W_np).float().to(device)
@@ -765,7 +755,7 @@ def generate_data(cfg):
     # plt.legend()
     # plt.show()
 
-    return x, y, x_np, y_np, xdim, ydim, F_fn, G_fn, p_0_dist
+    return x_np, y_np, xdim, ydim, F_fn, G_fn, p_0_dist
 
 
 def full_batch_stats(model, num_samples=1000):

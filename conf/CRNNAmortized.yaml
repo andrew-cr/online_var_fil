@@ -1,0 +1,63 @@
+defaults:
+  - globals
+
+name: "CRNNAmortized"
+
+# system
+device: "cpu"
+seed: null
+
+model_training:
+  func_type: 'kernel_amortised'
+  q_rnn_type: "MLP"
+  q_net_type: "Identity"
+  q_rnn_hidden_dim: 100
+  q_rnn_num_layers: 1
+  q_hidden_dims: [100]
+  num_epochs: 2
+  phi_lr: 2e-4
+  phi_lr_decay_type: 'none'
+  phi_lr_num_steps_oom_drop: 5000
+  phi_iters: 10
+  phi_minibatch_size: 32
+  phi_grad_clip_norm: 1000000
+  window_size: 1
+
+  rnn_window_size: 1
+  rnn_h_lambda: 0
+
+  funcs_to_approx: 'ST'
+  approx_updates_start_t: 0
+  approx_decay: 1
+  approx_iters: 25
+  approx_lr: 2e-4
+  approx_minibatch_size: 32
+  approx_loss_write_freq: 10
+  approx_with_filter: False
+
+  kernel_batch_size: 250
+  kernel_train_set_size: 100
+  KRR_lambda: 0.01
+  KRR_sigma: 2
+  KRR_train_sigma: True
+  KRR_train_lam: True
+  KRR_centre_elbo: True
+
+  save_models: True
+  plot_diagnostics: False
+  evaluate_elbo: False
+  evaluate_final_elbo: True
+  evaluate_elbo_num_samples: 500
+  back_log_length: 10
+
+data:
+  data_name: CRNN
+  path_to_data: null
+  dim: 5
+  grid_size: 0.001
+  gamma: 2.5
+  tau: 0.025
+  U_std: 1e-1
+  V_scale: 1e-1
+  V_df: 2
+  num_data: 100

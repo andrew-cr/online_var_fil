@@ -753,7 +753,6 @@ class BootstrapParticleFilter(nn.Module):
 
     def update(self, y_T):
         if self.resample_criterion():
-            print("resample")
             self.resample()
 
         self.x_T = self.sample_q_T(y_T, self.num_particles, detach_x=True)

@@ -233,3 +233,7 @@ def make_lr_scheduler(opt, decay_type, num_steps_oom_drop=None):
     elif decay_type == 'none':
         lr_scheduler = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda=lambda iter: 1)
     return lr_scheduler
+
+
+def replace_none(x):
+    return x if x is not None else []

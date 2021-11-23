@@ -11,8 +11,7 @@ model_training:
   func_type: 'Vx_t'
   q_hidden_dims: [100]
   phi_lr: 1e-2
-  phi_lr_decay_type: exponential
-  phi_lr_num_steps_oom_drop: 100000000 # No decay
+  phi_lr_decay_type: none
   phi_iters: 500
   phi_minibatch_size: 10
   phi_t_init_method: pred
