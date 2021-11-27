@@ -67,10 +67,9 @@ class AmortizedModelBase(nonamortised_models.NonAmortizedModelBase):
         self.q_rnn_hist_hn_list = []
         self.q_rnn_hist_output_list = []
 
-    def detach_rnn_hist_hn(self, y, t=None):
+    def detach_rnn_hist_hn(self, y):
         # Detach and store the last rnn state in the window, should be called at the end of each T
-        if t is None:
-            t = self.T - self.rnn_window_size + 1  # Detach and store h_t
+        t = self.T - self.rnn_window_size + 1  # Detach and store h_t
         if t >= 0:
             if t == 0:
                 output, hn = self.q_rnn(y[0, :].view(1, 1, self.ydim))
@@ -153,7 +152,7 @@ class AmortizedModelBase(nonamortised_models.NonAmortizedModelBase):
         self.rnn_outputs, _ = self.q_rnn(y.view(self.T + 1, 1, self.ydim))
         return self.rnn_outputs
 
-    def compute_filter_stats(self, T=None):
+    def compute_filter_stats(self, T=None, detach=False):
         """
             Compute the q_T(x_T) (filtering) statistics at time T
             Need to call rnn_forward before calling this function
@@ -167,6 +166,9 @@ class AmortizedModelBase(nonamortised_models.NonAmortizedModelBase):
 
         else:  # case: sample recent q_T in the window, we use self.rnn_outputs
             q_T_stats = self.q_t_net(self.rnn_outputs[T - t_start, 0, :])
+
+        if detach:
+            q_T_stats = [q_T_stat.detach() for q_T_stat in q_T_stats]
 
         return q_T_stats
 
@@ -270,6 +272,10 @@ class Kernel_Amortised_Model(AmortizedModelBase):
     def __init__(self, device, xdim, ydim, q_rnn, q_t_net, cond_q_t_net, F_fn, G_fn, p_0_dist,
                  window_size, rnn_window_size, rnn_h_lambda,
                  approx_func_constructor, funcs_to_approx, approx_updates_start_t, approx_decay, approx_with_filter):
+        # Deprecated arguments
+        assert window_size == 1
+        assert rnn_window_size == 1
+        assert rnn_h_lambda == 0
         super().__init__(device, xdim, ydim, q_rnn, q_t_net, cond_q_t_net, F_fn, G_fn, p_0_dist,
                          window_size, rnn_window_size)
         self.rnn_h_lambda = rnn_h_lambda
@@ -311,13 +317,13 @@ class Kernel_Amortised_Model(AmortizedModelBase):
             if t == 0:
                 if self.approx_with_filter:
                     # Adjust r_t to the form in the paper
-                    log_q_t = self.compute_log_q_t(x_t, *self.compute_filter_stats(t))
+                    log_q_t = self.compute_log_q_t(x_t, *self.compute_filter_stats(t, detach=True))
                     r_t -= log_q_t
             else:
                 x_tm1 = r_results["x_tm1"]
                 if self.approx_with_filter:
-                    log_q_t = self.compute_log_q_t(x_t, *self.compute_filter_stats(t))
-                    log_q_tm1 = self.compute_log_q_t(x_tm1, *self.compute_filter_stats(t-1))
+                    log_q_t = self.compute_log_q_t(x_t, *self.compute_filter_stats(t, detach=True))
+                    log_q_tm1 = self.compute_log_q_t(x_tm1, *self.compute_filter_stats(t - 1, detach=True))
                     r_t += (log_q_tm1 - log_q_t)
 
             # t_t = \nabla_{x_t} r_t(x_{t-1}(phi, x_t), x_t), shape (num_samples, xdim)
@@ -333,13 +339,14 @@ class Kernel_Amortised_Model(AmortizedModelBase):
             if self.theta_dim > 0 and 'S' in self.funcs_to_approx:
                 for i in range(num_samples):
                     s_t[i, :] = nn.utils.parameters_to_vector(
-                        torch.autograd.grad(r_t[i, 0], self.get_theta_params(), retain_graph=True))
+                        torch.autograd.grad(r_t[i, 0] + 0 * self.get_theta_params(flatten=True)[0],
+                                            self.get_theta_params(), retain_graph=True))
 
             # u_t = \nabla_phi r_t(x_{t-1}(phi, x_t), x_t), shape (num_samples, phi_dim)
             if 'U' in self.funcs_to_approx:
                 for i in range(num_samples):
                     u_t[i, :] = nn.utils.parameters_to_vector(
-                        torch.autograd.grad(r_t[i, 0] + 0 * self.get_phi_params(flatten=True).mean(),
+                        torch.autograd.grad(r_t[i, 0] + 0 * self.get_phi_params(flatten=True)[0],
                                             self.get_phi_params(), retain_graph=True))
 
             # S_tm1 = \nabla_theta V_{t-1} (x_{t-1})
@@ -367,7 +374,7 @@ class Kernel_Amortised_Model(AmortizedModelBase):
                     for i in range(num_samples):
                         T_tm1_dx_tm1_phi[i, :] = nn.utils.parameters_to_vector(
                             torch.autograd.grad((T_tm1[i, :] * x_tm1[i, :]).sum() +
-                                                0 * self.get_phi_params(flatten=True).mean(),
+                                                0 * self.get_phi_params(flatten=True)[0],
                                                 self.get_phi_params(), retain_graph=True))
 
             return x_t.detach(), (s_t + self.approx_decay * S_tm1).detach(), \
@@ -440,13 +447,13 @@ class Kernel_Amortised_Model(AmortizedModelBase):
 
             if self.T <= self.approx_updates_start_t + self.window_size - 1:  # Do not have approx_func_tm1 before
                 # AELBO-2
-                q_tm1_mean, q_tm1_std = self.compute_filter_stats(self.T - self.window_size)
-                q_tm1_mean, q_tm1_std = q_tm1_mean.detach(), q_tm1_std.detach()
-                log_q_x_tm1 = self.compute_log_q_t(x_tm1_1, q_tm1_mean, q_tm1_std)
+                log_q_x_tm1 = self.compute_log_q_t(x_tm1_1,
+                                                   *self.compute_filter_stats(self.T - self.window_size, detach=True))
                 loss = - (sum_r + log_q_x_tm1 - log_q_x_T).mean()
             else:
                 if self.approx_with_filter:
-                    log_q_x_tm1 = self.compute_log_q_t(x_tm1_1, *self.compute_filter_stats(self.T - self.window_size))
+                    log_q_x_tm1 = self.compute_log_q_t(x_tm1_1, *self.compute_filter_stats(self.T - self.window_size,
+                                                                                           detach=True))
                     sum_r += log_q_x_tm1
 
                 with torch.no_grad():
@@ -465,8 +472,6 @@ class Kernel_Amortised_Model(AmortizedModelBase):
 
                 if 'T' in self.funcs_to_approx:
                     V_sum_1 += (T_tm1_1 * x_tm1_1).sum(1, keepdim=True)
-                    if self.approx_with_filter:
-                        V_sum_2 += (T_tm1_2 * x_tm1_2).sum(1, keepdim=True)
 
                 if 'U' in self.funcs_to_approx:
                     V_sum_1 += (U_tm1_1 * self.get_phi_params(flatten=True)).sum(1, keepdim=True)
@@ -705,6 +710,7 @@ class SeparateTimeKernelAmortisedModel(AmortizedModelBase):
 
     def get_func_t_params(self):
         return self.approx_func_t.parameters()
+
 
 class SeparateTimeAnalyticAmortisedModel(AmortizedModelBase):
     def __init__(self, device, xdim, ydim, q_rnn_constructor,

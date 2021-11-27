@@ -33,7 +33,7 @@ model_training:
   approx_lr: 2e-4
   approx_minibatch_size: 32
   approx_loss_write_freq: 10
-  approx_with_filter: False
+  approx_with_filter: True
 
   kernel_batch_size: 250
   kernel_train_set_size: 100

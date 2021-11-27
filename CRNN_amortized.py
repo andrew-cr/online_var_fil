@@ -237,6 +237,7 @@ def main(cfg):
             plt.plot(filter_means_historical_rnn[:, i], ls="--", c="C"+str(i))
         plt.title("x vs filter_means_historical_rnn (first 3 dims)")
         plt.savefig("filter_means_historical_rnn.png")
+        plt.clf()
 
         # Offline
         # Joint
