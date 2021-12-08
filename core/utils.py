@@ -2,7 +2,6 @@ from operator import mul
 import numpy as np
 import torch
 import torch.nn as nn
-import pandas
 import glob
 import yaml
 import subprocess
